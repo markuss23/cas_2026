@@ -31,7 +31,7 @@ library(lmtest)
 library(dynlm)
 ```
 
----
+------------------------------------------------------------------------
 
 # Popis dat
 
@@ -39,16 +39,16 @@ Dataset `Seatbelts` je součástí základní instalace R (balíček `datasets`)
 
 **Proměnné:**
 
-| Proměnná | Popis |
-|---|---|
-| `DriversKilled` | Počet usmrcených řidičů za měsíc — **hlavní řada** |
-| `drivers` | Celkový počet zraněných/usmrcených řidičů |
-| `front` | Zranění spolujezdci na předním sedadle |
-| `rear` | Zranění spolujezdci na zadním sedadle |
-| `kms` | Celkový počet najetých kilometrů |
-| `PetrolPrice` | Cena benzínu |
-| `VanKilled` | Usmrcení v dodávkách |
-| `law` | Dummy proměnná: zákon o povinném připoutání (od ledna 1983) |
+| Proměnná        | Popis                                                       |
+|-----------------|-------------------------------------------------------------|
+| `DriversKilled` | Počet usmrcených řidičů za měsíc — **hlavní řada**          |
+| `drivers`       | Celkový počet zraněných/usmrcených řidičů                   |
+| `front`         | Zranění spolujezdci na předním sedadle                      |
+| `rear`          | Zranění spolujezdci na zadním sedadle                       |
+| `kms`           | Celkový počet najetých kilometrů                            |
+| `PetrolPrice`   | Cena benzínu                                                |
+| `VanKilled`     | Usmrcení v dodávkách                                        |
+| `law`           | Dummy proměnná: zákon o povinném připoutání (od ledna 1983) |
 
 Jako **hlavní řadu** jsme zvolili `DriversKilled` — má sezónní složku (zimní měsíce jsou nebezpečnější) i mírný klesající trend.
 
@@ -70,11 +70,12 @@ cat("Frekvence:", frequency(DK), "(měsíční data)\n")
 cat("Počet pozorování:", length(DK), "\n")
 ```
 
----
+------------------------------------------------------------------------
 
 # Grafické zobrazení řady
 
 Pohled na všechny a pohled na hlavní řadu
+
 ```{r graf-vsechny}
 plot(Seatbelts,
      main = "Seatbelts — přehled všech proměnných")
@@ -94,9 +95,9 @@ legend("topright",
        lty    = c(1, 2), lwd = c(1.5, 1))
 ```
 
- Řada vykazuje jasnou **sezónní složku** — v zimních měsících (prosinec–únor) dochází k více nehodám, pravděpodobně vlivem náledí a kratšího dne (je dříve tma). Je patrný mírný **klesající trend**, který se výrazně prohloubil po roce 1983, kdy vstoupil v platnost zákon o povinném připoutání bezpečnostními pásy.
+Řada vykazuje jasnou **sezónní složku** — v zimních měsících (prosinec–únor) dochází k více nehodám, pravděpodobně vlivem náledí a kratšího dne (je dříve tma). Je patrný mírný **klesající trend**, který se výrazně prohloubil po roce 1983, kdy vstoupil v platnost zákon o povinném připoutání bezpečnostními pásy.
 
----
+------------------------------------------------------------------------
 
 # Dekompozice a identifikace trendu
 
@@ -118,11 +119,25 @@ title("Multiplikativní dekompozice", line = 3)
 
 ```{r dekompozice-residua}
 # Porovnání variability residuí
+# Nelze porovnávat, protože to je v jiných jednotkách, ale chceme co nejmenší číšlo
 cat("Aditivní    — sd residuí:", round(sd(dec_add$random,  na.rm=TRUE), 3), "\n")
 cat("Multiplikativní — sd residuí:", round(sd(dec_mult$random, na.rm=TRUE), 3), "\n")
 ```
+Dekompozice = rozložení časové řady na tři části:
 
-**Komentář:** Zvolíme dekompozici s menší variabilitou residuí. Aditivní model předpokládá konstantní amplitudu sezónnosti, multiplikativní předpokládá, že sezónní výkyvy jsou proporcionální k úrovni řady.
+- trend — dlouhodobý směr (řada celkově roste, klesá, nebo je stabilní)
+- sezónnost — pravidelně se opakující výkyvy (každou zimu více nehod, každé léto méně)
+- chyba (residua) — to, co zbyde po odečtení trendu a sezónnosti — náhodný šum
+
+
+Z grafů obou dekompozic jsou výsledky prakticky totožné — sezónní složka i trend vypadají stejně.
+V takovém případě volíme aditivní model, protože je jednodušší.
+
+Aditivní model jen sčítá složky:
+- Yt = trend + sezónnost + chyba
+Multiplikativní je násobí:
+- Yt = trend × sezónnost × chyba
+
 
 ## STL dekompozice
 
@@ -134,6 +149,7 @@ plot(stl_fit, main = "STL dekompozice")
 ```
 
 ## Vyhlazení klouzavými průměry
+
 
 ```{r klouzave-prumery}
 plot(DK,
@@ -148,27 +164,25 @@ legend("topright",
        col    = c("gray70", "blue", "red", "purple"),
        lty    = c(1, 2, 1, 3), lwd = c(1, 1.5, 2, 1.5))
 ```
+MA(12) eliminuje sezónní složku a odhaluje čistý trend. MA(3) vyhlazuje krátkodobé výkyvy, ale sezónnost ponechává.
 
-```{r klouzave-prumery-vazene}
-# Klouzavé průměry vyššího řádu (s vahami) — způsob z cvičení
-vahy3 <- (1/35) * c(-3, 12, 17, 12, -3)
-DK_rm3.5 <- rollapply(DK, 5,
-              function(z) weighted.mean(z, vahy3))
+## Další metoda: Exponenciální vyrovnání (Holt-Winters)
 
-plot(DK, col = "gray70",
-     main = "Klouzavý průměr 3. řádu (délka 5, Henderson-Whittaker váhy)",
-     ylab = "Počet usmrcených")
-lines(DK_rm3.5, col = "darkgreen", lwd = 2)
-legend("topright",
-       legend = c("Původní řada", "MA 3. řádu (délka 5)"),
-       col = c("gray70", "darkgreen"), lwd = c(1, 2))
-```
+Holt-Winters je metoda vyhlazování, která sleduje tři věci najednou — úroveň, trend a sezónnost — a každou z nich průběžně aktualizuje podle nových dat.
+Parametry alfa, beta, gama řídí, jak moc věříš novým datům oproti starým:
 
-**Komentář:** MA(12) eliminuje sezónní složku a odhaluje čistý trend. MA(3) vyhlazuje krátkodobé výkyvy, ale sezónnost ponechává.
+hodnota blízká 1 = skoro ignoruješ historii, sleduješ jen poslední hodnoty
+hodnota blízká 0 = dáváš velkou váhu historii, změny se projevují pomalu
 
-## Exponenciální vyrovnání (Holt-Winters)
+Co každý parametr dělá:
+
+alfa — jak rychle se přizpůsobuje celková úroveň řady (počet nehod obecně)
+beta — jak rychle se mění trend (zrychluje nebo zpomaluje pokles)
+gama — jak rychle se mění sezónní vzor (jestli zimy jsou čím dál nebezpečnější nebo ne)
 
 ```{r holt-winters}
+
+
 hw_fit <- HoltWinters(DK)
 plot(hw_fit,
      main = "Holt-Winters — exponenciální vyrovnání")
@@ -176,10 +190,7 @@ cat("Parametr alfa (úroveň):", round(hw_fit$alpha, 4), "\n")
 cat("Parametr beta  (trend):", round(hw_fit$beta,  4), "\n")
 cat("Parametr gama (sezón.):", round(hw_fit$gamma, 4), "\n")
 ```
-
-**Komentář:** Vysoká hodnota alfa indikuje, že model přikládá velkou váhu posledním pozorováním. Gamma popisuje rychlost přizpůsobení sezónní složky.
-
----
+------------------------------------------------------------------------
 
 # Hledání optimálního modelu: trend + sezónnost
 
@@ -248,7 +259,7 @@ legend("topright",
 
 **Komentář:** Model s nejnižším AIC/BIC vybereme jako optimální. K=6 odpovídá plné sezónnosti (ekvivalent dummies), nižší K jsou parsimoniálnější modely.
 
----
+------------------------------------------------------------------------
 
 # Hledání optimálního modelu SARIMA
 
@@ -351,7 +362,7 @@ cat("\n--- Významnost koeficientů: BIC model ---\n")
 coeftest(fit_sarima_bic)
 ```
 
-**Komentář:** Koeficienty by měly být alespoň 2× větší než jejich standardní chyba (tj. z-hodnota > 2). Model s nevýznamnými koeficienty je zbytečně složitý. BIC model bývá parsimoniálnější — pokud dává podobné AIC jako složitější model a všechny koeficienty jsou významné, preferujeme ho.
+**Komentář:** Koeficienty by měly být alespoň 2× větší než jejich standardní chyba (tj. z-hodnota \> 2). Model s nevýznamnými koeficienty je zbytečně složitý. BIC model bývá parsimoniálnější — pokud dává podobné AIC jako složitější model a všechny koeficienty jsou významné, preferujeme ho.
 
 ## Ruční srovnání kandidátů
 
@@ -376,7 +387,7 @@ print(srovnani_sarima)
 
 **Komentář:** Vybereme model s nejnižším AIC (Akaike Information Criterion), případně BIC pro přísnější penalizaci složitosti. Výsledný model zapíšeme ve tvaru SARIMA(p,d,q)(P,D,Q)[12].
 
----
+------------------------------------------------------------------------
 
 # Hledání závislostí na jiných řadách (CCF)
 
@@ -406,7 +417,7 @@ par(mfrow = c(1,1))
 
 **Komentář:** Z CCF odečteme optimální zpoždění (lag) pro každý potenciální regresor. Záporný lag (např. lag = -2) znamená, že změna regresoru předchází změně hlavní řady o 2 měsíce — jde tedy o použitelný prediktor. Kladný lag naznačuje zpětnou vazbu.
 
----
+------------------------------------------------------------------------
 
 # Optimální model kombinující regresory a autokorelaci (ARIMAX)
 
@@ -442,7 +453,7 @@ cat("Zákon o pásech snížil průměrný měsíční počet obětí přibližn
 
 **Komentář:** ARIMAX (regression with ARIMA errors) je regresní model, kde je autokorelační struktura residuí modelována procesem ARIMA. Koeficient u `law` by měl být záporný a statisticky signifikantní — potvrzoval by, že zákon o povinném připoutání prokazatelně snížil počet obětí.
 
----
+------------------------------------------------------------------------
 
 # Kontrola periody pomocí periodogramu
 
@@ -465,7 +476,7 @@ abline(v = 1/12, col = "red", lty = 2, lwd = 2)
 
 **Komentář:** Dominantní špička na frekvenci 1/12 ≈ 0.083 potvrzuje periodu 12 měsíců. Případné další špičky (např. na 1/6) odpovídají vyšším harmonickým složkám sezónního cyklu.
 
----
+------------------------------------------------------------------------
 
 # Kontrola předpokladů — nezávislost residuí
 
@@ -506,9 +517,9 @@ par(mfrow = c(1,1))
 checkresiduals(fit_arimax)
 ```
 
-**Komentář:** Ljung-Box test: H0 = residua jsou nezávislá (bílý šum). Chceme p > 0.05. Lineární model typicky tento předpoklad nesplňuje (residua jsou autokorelovaná) — proto přecházíme k SARIMA/ARIMAX. ACF residuí by neměla vykazovat statisticky významné výchylky mimo konfidenční pásy (přerušované modré čáry).
+**Komentář:** Ljung-Box test: H0 = residua jsou nezávislá (bílý šum). Chceme p \> 0.05. Lineární model typicky tento předpoklad nesplňuje (residua jsou autokorelovaná) — proto přecházíme k SARIMA/ARIMAX. ACF residuí by neměla vykazovat statisticky významné výchylky mimo konfidenční pásy (přerušované modré čáry).
 
----
+------------------------------------------------------------------------
 
 # Predikce 10 budoucích pozorování
 
@@ -606,11 +617,11 @@ legend("topright",
 
 **Komentář:** Každá šedá čára je jeden možný budoucí průchod řady — vizualizuje variabilitu predikce lépe než samotné intervaly spolehlivosti. Červená čára je bodová predikce (střední hodnota).
 
----
+------------------------------------------------------------------------
 
 **Komentář:** Každá šedá čára je jeden možný budoucí průchod řady — vizualizuje variabilitu predikce lépe než samotné intervaly spolehlivosti. Červená čára je bodová predikce (střední hodnota).
 
----
+------------------------------------------------------------------------
 
 # Porovnání modelů a závěr
 
@@ -633,8 +644,8 @@ print(tab)
 
 **Závěr:**
 
-- **Lineární model** (trend + sezónnost / Fourierovy koeficienty) je interpretovatelný a intuitivní, ale residua jsou autokorelovaná — model nezachycuje veškerou strukturu v datech.
-- **SARIMA** řeší autokorelaci a poskytuje spolehlivé predikce bez nutnosti externích prediktorů. Nevýhodou je, že nezahrnuje vliv zákona o pásech ani ceny benzínu.
-- **ARIMAX** je nejúplnější model: kombinuje ARIMA strukturu s věcně smysluplnými regresory. Koeficient u `law` interpretujeme jako průměrný efekt zákona o povinném připoutání na počet obětí. Nevýhoda: pro predikci potřebujeme odhadnout budoucí hodnoty regresorů.
+-   **Lineární model** (trend + sezónnost / Fourierovy koeficienty) je interpretovatelný a intuitivní, ale residua jsou autokorelovaná — model nezachycuje veškerou strukturu v datech.
+-   **SARIMA** řeší autokorelaci a poskytuje spolehlivé predikce bez nutnosti externích prediktorů. Nevýhodou je, že nezahrnuje vliv zákona o pásech ani ceny benzínu.
+-   **ARIMAX** je nejúplnější model: kombinuje ARIMA strukturu s věcně smysluplnými regresory. Koeficient u `law` interpretujeme jako průměrný efekt zákona o povinném připoutání na počet obětí. Nevýhoda: pro predikci potřebujeme odhadnout budoucí hodnoty regresorů.
 
 Pro **predikci** doporučujeme model SARIMA nebo ARIMAX (pokud jsou dostupné budoucí hodnoty regresorů). Pro **interpretaci** a věcný závěr je nejcennější ARIMAX díky koeficientu u `law`.
