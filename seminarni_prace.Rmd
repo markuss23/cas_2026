@@ -1,0 +1,640 @@
+---
+title: "Hledání optimálního modelu pro časovou řadu: počty usmrcených řidičů (UK, 1969–1984)"
+author: "Marek Tremel, Radek Novák, Daniel Senčišin"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width  = 10,
+  fig.height = 5,
+  fig.align  = "center"
+)
+```
+
+```{r libraries}
+library(forecast)
+library(ggplot2)
+library(zoo)
+library(lmtest)
+library(dynlm)
+```
+
+---
+
+# Popis dat
+
+Dataset `Seatbelts` je součástí základní instalace R (balíček `datasets`). Obsahuje měsíční data z Velké Británie za období **leden 1969 – prosinec 1984** (192 pozorování).
+
+**Proměnné:**
+
+| Proměnná | Popis |
+|---|---|
+| `DriversKilled` | Počet usmrcených řidičů za měsíc — **hlavní řada** |
+| `drivers` | Celkový počet zraněných/usmrcených řidičů |
+| `front` | Zranění spolujezdci na předním sedadle |
+| `rear` | Zranění spolujezdci na zadním sedadle |
+| `kms` | Celkový počet najetých kilometrů |
+| `PetrolPrice` | Cena benzínu |
+| `VanKilled` | Usmrcení v dodávkách |
+| `law` | Dummy proměnná: zákon o povinném připoutání (od ledna 1983) |
+
+Jako **hlavní řadu** jsme zvolili `DriversKilled` — má sezónní složku (zimní měsíce jsou nebezpečnější) i mírný klesající trend.
+
+```{r nacteni-dat}
+data(Seatbelts)
+
+DK      <- Seatbelts[, "DriversKilled"]
+drivers <- Seatbelts[, "drivers"]
+front   <- Seatbelts[, "front"]
+rear    <- Seatbelts[, "rear"]
+van     <- Seatbelts[, "VanKilled"]
+kms     <- Seatbelts[, "kms"]
+petrol  <- Seatbelts[, "PetrolPrice"]
+law     <- Seatbelts[, "law"]
+
+cat("Začátek:", start(DK), "\n")
+cat("Konec:  ", end(DK),   "\n")
+cat("Frekvence:", frequency(DK), "(měsíční data)\n")
+cat("Počet pozorování:", length(DK), "\n")
+```
+
+---
+
+# Grafické zobrazení řady
+
+Pohled na všechny a pohled na hlavní řadu
+```{r graf-vsechny}
+plot(Seatbelts,
+     main = "Seatbelts — přehled všech proměnných")
+```
+
+```{r graf-hlavni}
+plot(DK,
+     main = "Počty usmrcených řidičů (UK, 1969–1984)",
+     ylab = "Počet usmrcených za měsíc",
+     xlab = "Rok",
+     col  = "steelblue",
+     lwd  = 1.5)
+abline(v = 1983, col = "red", lty = 2)
+legend("topright",
+       legend = c("DriversKilled", "Zákon o pásech (1983)"),
+       col    = c("steelblue", "red"),
+       lty    = c(1, 2), lwd = c(1.5, 1))
+```
+
+ Řada vykazuje jasnou **sezónní složku** — v zimních měsících (prosinec–únor) dochází k více nehodám, pravděpodobně vlivem náledí a kratšího dne (je dříve tma). Je patrný mírný **klesající trend**, který se výrazně prohloubil po roce 1983, kdy vstoupil v platnost zákon o povinném připoutání bezpečnostními pásy.
+
+---
+
+# Dekompozice a identifikace trendu
+
+## Klasická dekompozice
+
+Zvolíme **aditivní** i **multiplikativní** dekompozici a porovnáme kvalitu residuí.
+
+```{r dekompozice-add}
+dec_add  <- decompose(DK, type = "additive")
+dec_mult <- decompose(DK, type = "multiplicative")
+plot(dec_add)
+title("Aditivní dekompozice", line = 3)
+```
+
+```{r dekompozice-mult}
+plot(dec_mult)
+title("Multiplikativní dekompozice", line = 3)
+```
+
+```{r dekompozice-residua}
+# Porovnání variability residuí
+cat("Aditivní    — sd residuí:", round(sd(dec_add$random,  na.rm=TRUE), 3), "\n")
+cat("Multiplikativní — sd residuí:", round(sd(dec_mult$random, na.rm=TRUE), 3), "\n")
+```
+
+**Komentář:** Zvolíme dekompozici s menší variabilitou residuí. Aditivní model předpokládá konstantní amplitudu sezónnosti, multiplikativní předpokládá, že sezónní výkyvy jsou proporcionální k úrovni řady.
+
+## STL dekompozice
+
+STL (Seasonal and Trend decomposition using Loess) je robustnější metoda, která si poradí s odlehlými hodnotami.
+
+```{r stl}
+stl_fit <- stl(DK, s.window = "periodic", robust = TRUE)
+plot(stl_fit, main = "STL dekompozice")
+```
+
+## Vyhlazení klouzavými průměry
+
+```{r klouzave-prumery}
+plot(DK,
+     main = "Klouzavé průměry — identifikace trendu",
+     ylab = "Počet usmrcených",
+     col  = "gray70")
+lines(rollmean(DK, 3),  col = "blue",   lwd = 1.5, lty = 2)
+lines(rollmean(DK, 12), col = "red",    lwd = 2)
+lines(rollmean(DK, 24), col = "purple", lwd = 1.5, lty = 3)
+legend("topright",
+       legend = c("Původní řada", "MA(3)", "MA(12) — roční", "MA(24) — dvouletý"),
+       col    = c("gray70", "blue", "red", "purple"),
+       lty    = c(1, 2, 1, 3), lwd = c(1, 1.5, 2, 1.5))
+```
+
+```{r klouzave-prumery-vazene}
+# Klouzavé průměry vyššího řádu (s vahami) — způsob z cvičení
+vahy3 <- (1/35) * c(-3, 12, 17, 12, -3)
+DK_rm3.5 <- rollapply(DK, 5,
+              function(z) weighted.mean(z, vahy3))
+
+plot(DK, col = "gray70",
+     main = "Klouzavý průměr 3. řádu (délka 5, Henderson-Whittaker váhy)",
+     ylab = "Počet usmrcených")
+lines(DK_rm3.5, col = "darkgreen", lwd = 2)
+legend("topright",
+       legend = c("Původní řada", "MA 3. řádu (délka 5)"),
+       col = c("gray70", "darkgreen"), lwd = c(1, 2))
+```
+
+**Komentář:** MA(12) eliminuje sezónní složku a odhaluje čistý trend. MA(3) vyhlazuje krátkodobé výkyvy, ale sezónnost ponechává.
+
+## Exponenciální vyrovnání (Holt-Winters)
+
+```{r holt-winters}
+hw_fit <- HoltWinters(DK)
+plot(hw_fit,
+     main = "Holt-Winters — exponenciální vyrovnání")
+cat("Parametr alfa (úroveň):", round(hw_fit$alpha, 4), "\n")
+cat("Parametr beta  (trend):", round(hw_fit$beta,  4), "\n")
+cat("Parametr gama (sezón.):", round(hw_fit$gamma, 4), "\n")
+```
+
+**Komentář:** Vysoká hodnota alfa indikuje, že model přikládá velkou váhu posledním pozorováním. Gamma popisuje rychlost přizpůsobení sezónní složky.
+
+---
+
+# Hledání optimálního modelu: trend + sezónnost
+
+## Model se sezónními dummies
+
+Ve cvičeních se trend a sezónnost modelují buď přes `lm()` s ručním časovým indexem (cvičení 1, 2), nebo přes `dynlm()` s funkcemi `trend()` a `season()` (cvičení 7, 8). Použijeme oba způsoby.
+
+```{r model-dummies}
+# Způsob z cvičení 7/8 — dynlm s trend() a season()
+fit_lm <- dynlm(DK ~ trend(DK) + season(DK))
+summary(fit_lm)
+```
+
+```{r model-dummies-lm}
+# Způsob z cvičení 1/2 — lm s ručním časovým indexem a kvadratickým trendem
+cas  <- as.numeric(time(DK))
+cas2 <- cas^2
+
+fit_lin <- lm(DK ~ cas)
+fit_kv  <- lm(DK ~ cas + cas2)
+
+cat("Lineární trend  — AIC:", round(AIC(fit_lin), 2),
+    " R²:", round(summary(fit_lin)$r.squared, 3), "\n")
+cat("Kvadratický trend — AIC:", round(AIC(fit_kv),  2),
+    " R²:", round(summary(fit_kv)$r.squared,  3), "\n")
+
+plot(DK, col = "gray70",
+     main = "Funkční trend — lineární vs kvadratický",
+     ylab = "Počet usmrcených")
+lines(cas, fitted(fit_lin), col = "blue", lwd = 2)
+lines(cas, fitted(fit_kv),  col = "red",  lwd = 2, lty = 2)
+legend("topright",
+       legend = c("Původní řada", "Lineární trend", "Kvadratický trend"),
+       col = c("gray70", "blue", "red"), lty = c(1,1,2), lwd = c(1,2,2))
+```
+
+## Model s Fourierovými koeficienty
+
+Fourierovy koeficienty jsou alternativou k sezónním dummies — pomocí parametru `K` řídíme počet harmonických složek (cvičení 9).
+
+```{r model-fourier}
+# fourier() funguje jen s objekty tslm — použijeme kombinaci lm + fourier z forecast
+fit_f2 <- tslm(DK ~ trend + fourier(DK, K = 2))
+fit_f3 <- tslm(DK ~ trend + fourier(DK, K = 3))
+fit_f6 <- tslm(DK ~ trend + fourier(DK, K = 6))
+
+# Porovnání modelů
+porovnani <- data.frame(
+  Model = c("dynlm trend+season", "Fourier K=2", "Fourier K=3", "Fourier K=6"),
+  AIC   = round(c(AIC(fit_lm), AIC(fit_f2), AIC(fit_f3), AIC(fit_f6)), 2),
+  BIC   = round(c(BIC(fit_lm), BIC(fit_f2), BIC(fit_f3), BIC(fit_f6)), 2)
+)
+print(porovnani)
+```
+
+```{r model-nejlepsi-vyber}
+# Zobrazení fitted values nejlepšího modelu (dynlm)
+plot(DK, col = "gray70",
+     main = "Fitted values — dynlm (trend + season)",
+     ylab = "Počet usmrcených")
+lines(fitted(fit_lm), col = "red", lwd = 2)
+legend("topright",
+       legend = c("Pozorovaná data", "Fitted values"),
+       col = c("gray70", "red"), lwd = c(1, 2))
+```
+
+**Komentář:** Model s nejnižším AIC/BIC vybereme jako optimální. K=6 odpovídá plné sezónnosti (ekvivalent dummies), nižší K jsou parsimoniálnější modely.
+
+---
+
+# Hledání optimálního modelu SARIMA
+
+## Diagnostika stacionarity
+
+```{r stacionarita-graf}
+par(mfrow = c(3,1))
+plot(DK,   main = "Původní řada", ylab = "DriversKilled")
+acf(DK,  lag.max = 48, main = "ACF")
+pacf(DK, lag.max = 48, main = "PACF")
+par(mfrow = c(1,1))
+```
+
+```{r adf-kpss}
+# Ve cvičeních se stacionarita hodnotí vizuálně přes ACF a porovnání rozptylů diferenciovaných řad.
+# ACF stacionární řady rychle klesá k nule — pokud klesá pomalu, řada není stacionární.
+acf(DK, lag.max = 48, main = "ACF původní řady — hodnocení stacionarity")
+```
+
+**Komentář:** Pokud ACF klesá pomalu (hodnoty jsou významné ještě na vysokých zpožděních), řada není stacionární a je třeba diferencovat. Pokud ACF rychle klesne k nule, řada stacionární je. Výsledek porovnáme s rozptyly diferenciovaných řad v dalším kroku.
+
+## Volba řádu diferencování — porovnání rozptylů
+
+Před výběrem modelu explicitně porovnáme rozptyl původní řady a různých diferencí. Správná diference je ta, která rozptyl **sníží** — přediferencování ho naopak zvýší.
+
+```{r diferencovani}
+n <- length(DK)
+var0  <- var(DK) * (n - 1) / n
+
+d1    <- diff(DK)                   # první diference
+var1  <- var(d1) * (length(d1) - 1) / length(d1)
+
+d1s   <- diff(DK, lag = 12)         # první sezónní diference
+var1s <- var(d1s) * (length(d1s) - 1) / length(d1s)
+
+d2    <- diff(DK, differences = 2)  # druhá diference
+var2  <- var(d2) * (length(d2) - 1) / length(d2)
+
+rozptyly <- data.frame(
+  Rada       = c("Původní", "1. diference", "1. sezónní diference (lag=12)", "2. diference"),
+  Rozptyl    = round(c(var0, var1, var1s, var2), 3)
+)
+print(rozptyly)
+```
+
+```{r diferencovani-graf}
+par(mfrow = c(2,1))
+plot(d1,  main = "První diference",          ylab = "diff(DK)")
+plot(d1s, main = "První sezónní diference",  ylab = "diff(DK, lag=12)")
+par(mfrow = c(1,1))
+```
+
+```{r diferencovani-acf}
+par(mfrow = c(2,2))
+acf(d1,  lag.max = 48, main = "ACF: 1. diference")
+pacf(d1, lag.max = 48, main = "PACF: 1. diference")
+acf(d1s,  lag.max = 48, main = "ACF: sezónní diference")
+pacf(d1s, lag.max = 48, main = "PACF: sezónní diference")
+par(mfrow = c(1,1))
+```
+
+**Komentář:** Vybereme tu diferenci, u které je rozptyl nejmenší. Druhá diference by rozptyl zvětšila — to by znamenalo přediferencování, které je stejně škodlivé jako žádné diferencování. Z ACF/PACF diferencované řady odhadneme kandidátní řády p, q, P, Q pro SARIMA.
+
+## Automatický výběr SARIMA
+
+```{r sarima-auto}
+# auto.arima s AIC (výchozí)
+fit_sarima <- auto.arima(DK,
+                         seasonal      = TRUE,
+                         stepwise      = FALSE,
+                         approximation = FALSE,
+                         trace         = FALSE)
+summary(fit_sarima)
+```
+
+```{r sarima-auto-bic}
+# auto.arima s BIC — ve cvičeních se vždy zkouší obě kritéria,
+# protože BIC penalizuje složitost přísněji a často dá jednodušší model
+fit_sarima_bic <- auto.arima(DK,
+                              seasonal      = TRUE,
+                              stepwise      = FALSE,
+                              approximation = FALSE,
+                              ic            = "bic",
+                              trace         = FALSE)
+summary(fit_sarima_bic)
+
+cat("\nSrovnání AIC vs BIC návrhu:\n")
+cat("AIC návrh — AIC:", round(AIC(fit_sarima), 2),
+    " BIC:", round(BIC(fit_sarima), 2), "\n")
+cat("BIC návrh — AIC:", round(AIC(fit_sarima_bic), 2),
+    " BIC:", round(BIC(fit_sarima_bic), 2), "\n")
+```
+
+```{r sarima-coeftest}
+# Významnost koeficientů — klíčový krok z cvičení
+cat("--- Významnost koeficientů: AIC model ---\n")
+coeftest(fit_sarima)
+
+cat("\n--- Významnost koeficientů: BIC model ---\n")
+coeftest(fit_sarima_bic)
+```
+
+**Komentář:** Koeficienty by měly být alespoň 2× větší než jejich standardní chyba (tj. z-hodnota > 2). Model s nevýznamnými koeficienty je zbytečně složitý. BIC model bývá parsimoniálnější — pokud dává podobné AIC jako složitější model a všechny koeficienty jsou významné, preferujeme ho.
+
+## Ruční srovnání kandidátů
+
+```{r sarima-kandidati}
+# Kandidátní modely na základě ACF/PACF
+fit_s1 <- Arima(DK, order=c(1,0,0), seasonal=c(1,1,0))
+fit_s2 <- Arima(DK, order=c(0,1,1), seasonal=c(0,1,1))
+fit_s3 <- Arima(DK, order=c(1,0,1), seasonal=c(1,0,0))
+
+srovnani_sarima <- data.frame(
+  Model = c(
+    paste0(as.character(fit_sarima), " — auto (AIC)"),
+    "ARIMA(1,0,0)(1,1,0)[12]",
+    "ARIMA(0,1,1)(0,1,1)[12]",
+    "ARIMA(1,0,1)(1,0,0)[12]"
+  ),
+  AIC  = round(c(AIC(fit_sarima), AIC(fit_s1), AIC(fit_s2), AIC(fit_s3)), 2),
+  BIC  = round(c(BIC(fit_sarima), BIC(fit_s1), BIC(fit_s2), BIC(fit_s3)), 2)
+)
+print(srovnani_sarima)
+```
+
+**Komentář:** Vybereme model s nejnižším AIC (Akaike Information Criterion), případně BIC pro přísnější penalizaci složitosti. Výsledný model zapíšeme ve tvaru SARIMA(p,d,q)(P,D,Q)[12].
+
+---
+
+# Hledání závislostí na jiných řadách (CCF)
+
+Kroskorelační funkce (CCF) identifikuje, zda a s jakým zpožděním jiná řada ovlivňuje hlavní řadu.
+
+```{r ccf-analyza}
+par(mfrow = c(2,2))
+
+ccf(as.numeric(kms), as.numeric(DK),
+    main = "CCF: kms → DriversKilled",
+    ylab = "CCF", lag.max = 24)
+
+ccf(as.numeric(petrol), as.numeric(DK),
+    main = "CCF: PetrolPrice → DriversKilled",
+    ylab = "CCF", lag.max = 24)
+
+ccf(as.numeric(front), as.numeric(DK),
+    main = "CCF: front → DriversKilled",
+    ylab = "CCF", lag.max = 24)
+
+ccf(as.numeric(rear), as.numeric(DK),
+    main = "CCF: rear → DriversKilled",
+    ylab = "CCF", lag.max = 24)
+
+par(mfrow = c(1,1))
+```
+
+**Komentář:** Z CCF odečteme optimální zpoždění (lag) pro každý potenciální regresor. Záporný lag (např. lag = -2) znamená, že změna regresoru předchází změně hlavní řady o 2 měsíce — jde tedy o použitelný prediktor. Kladný lag naznačuje zpětnou vazbu.
+
+---
+
+# Optimální model kombinující regresory a autokorelaci (ARIMAX)
+
+Na základě CCF analýzy z předchozího kroku sestavíme matici regresorů.
+
+```{r arimax}
+# Matice regresorů — uprav zpoždění (lag) podle výsledků CCF
+xreg <- cbind(
+  kms    = as.numeric(kms),
+  petrol = as.numeric(petrol),
+  law    = as.numeric(law)
+)
+
+fit_arimax <- auto.arima(DK,
+                         xreg         = xreg,
+                         seasonal     = TRUE,
+                         stepwise     = FALSE,
+                         approximation = FALSE)
+summary(fit_arimax)
+```
+
+```{r arimax-koeficienty}
+# Významnost koeficientů ARIMAX modelu — povinný krok z cvičení
+cat("--- Významnost koeficientů ARIMAX ---\n")
+coeftest(fit_arimax)
+
+# Interpretace koeficientu u law
+coef_law <- coef(fit_arimax)["law"]
+cat("\nKoeficient u proměnné 'law':", round(coef_law, 2), "\n")
+cat("Zákon o pásech snížil průměrný měsíční počet obětí přibližně o",
+    abs(round(coef_law, 1)), "osob.\n")
+```
+
+**Komentář:** ARIMAX (regression with ARIMA errors) je regresní model, kde je autokorelační struktura residuí modelována procesem ARIMA. Koeficient u `law` by měl být záporný a statisticky signifikantní — potvrzoval by, že zákon o povinném připoutání prokazatelně snížil počet obětí.
+
+---
+
+# Kontrola periody pomocí periodogramu
+
+```{r periodogram}
+spec.pgram(DK, log = "no",
+           main = "Periodogram: DriversKilled",
+           col = "steelblue")
+abline(v = 1/12, col = "red", lty = 2, lwd = 2)
+legend("topright",
+       legend = "Frekvence 1/12 (perioda 12 měs.)",
+       col = "red", lty = 2)
+```
+
+```{r periodogram-vyhlazen}
+spec.pgram(DK, spans = c(3, 5), log = "no",
+           main = "Vyhlazený periodogram",
+           col = "steelblue")
+abline(v = 1/12, col = "red", lty = 2, lwd = 2)
+```
+
+**Komentář:** Dominantní špička na frekvenci 1/12 ≈ 0.083 potvrzuje periodu 12 měsíců. Případné další špičky (např. na 1/6) odpovídají vyšším harmonickým složkám sezónního cyklu.
+
+---
+
+# Kontrola předpokladů — nezávislost residuí
+
+Ve cvičeních se residua kontrolují dvojím způsobem: `acf()` + `pacf()` vedle sebe (odhalí strukturu zbylé autokorelace) a `checkresiduals()` (přidá histogram a Ljung-Box test).
+
+## Lineární model (dynlm)
+
+```{r residua-lm}
+par(mfrow = c(2,1))
+acf(residuals(fit_lm),  lag.max = 48,
+    main = "ACF residuí — lineární model")
+pacf(residuals(fit_lm), lag.max = 48,
+    main = "PACF residuí — lineární model")
+par(mfrow = c(1,1))
+
+Box.test(residuals(fit_lm), lag = 20, type = "Ljung-Box")
+```
+
+## SARIMA model
+
+```{r residua-sarima}
+par(mfrow = c(2,1))
+acf(residuals(fit_sarima),  lag.max = 48, main = "ACF residuí — SARIMA")
+pacf(residuals(fit_sarima), lag.max = 48, main = "PACF residuí — SARIMA")
+par(mfrow = c(1,1))
+
+checkresiduals(fit_sarima)
+```
+
+## ARIMAX model
+
+```{r residua-arimax}
+par(mfrow = c(2,1))
+acf(residuals(fit_arimax),  lag.max = 48, main = "ACF residuí — ARIMAX")
+pacf(residuals(fit_arimax), lag.max = 48, main = "PACF residuí — ARIMAX")
+par(mfrow = c(1,1))
+
+checkresiduals(fit_arimax)
+```
+
+**Komentář:** Ljung-Box test: H0 = residua jsou nezávislá (bílý šum). Chceme p > 0.05. Lineární model typicky tento předpoklad nesplňuje (residua jsou autokorelovaná) — proto přecházíme k SARIMA/ARIMAX. ACF residuí by neměla vykazovat statisticky významné výchylky mimo konfidenční pásy (přerušované modré čáry).
+
+---
+
+# Predikce 10 budoucích pozorování
+
+## SARIMA predikce
+
+```{r predikce-sarima}
+fc_sarima <- forecast(fit_sarima, h = 10, level = c(80, 95))
+plot(fc_sarima,
+     main = "Predikce SARIMA — 10 měsíců dopředu",
+     ylab = "Počet usmrcených",
+     xlab = "Rok",
+     fcol = "red",
+     shadecols = c("lightblue", "lightyellow"))
+```
+
+```{r predikce-sarima-hodnoty}
+print(fc_sarima)
+```
+
+## Holt-Winters predikce
+
+```{r predikce-hw}
+fc_hw <- forecast(hw_fit, h = 10, level = c(80, 95))
+plot(fc_hw,
+     main = "Predikce Holt-Winters — 10 měsíců dopředu",
+     ylab = "Počet usmrcených",
+     fcol = "darkgreen")
+```
+
+## ARIMAX predikce
+
+Pro ARIMAX je nutné dodat budoucí hodnoty regresorů. Používáme průměr posledních 24 měsíců jako odhad.
+
+```{r predikce-arimax}
+xreg_future <- cbind(
+  kms    = rep(mean(tail(as.numeric(kms),    24)), 10),
+  petrol = rep(mean(tail(as.numeric(petrol), 24)), 10),
+  law    = rep(1, 10)   # zákon platí dál
+)
+
+fc_arimax <- forecast(fit_arimax, xreg = xreg_future, h = 10, level = c(80, 95))
+plot(fc_arimax,
+     main = "Predikce ARIMAX — 10 měsíců dopředu",
+     ylab = "Počet usmrcených",
+     fcol = "purple")
+```
+
+## Srovnání predikcí všech modelů
+
+```{r predikce-srovnani}
+plot(fc_sarima,
+     main = "Srovnání predikcí: SARIMA vs Holt-Winters vs ARIMAX",
+     ylab = "Počet usmrcených",
+     xlab = "Rok",
+     flty = 1)
+lines(fc_hw$mean,     col = "darkgreen", lwd = 2, lty = 2)
+lines(fc_arimax$mean, col = "purple",    lwd = 2, lty = 3)
+legend("topright",
+       legend = c("SARIMA", "Holt-Winters", "ARIMAX"),
+       col    = c("blue", "darkgreen", "purple"),
+       lty    = c(1, 2, 3), lwd = 2)
+```
+
+## Vizualizace nejistoty predikce přes simulaci
+
+Ve cvičeních se kromě intervalů spolehlivosti simuluje více možných budoucích průchodů řady — lépe ilustruje rozsah nejistoty.
+
+```{r predikce-simulace}
+set.seed(42)
+n_sim    <- 20
+t_hist   <- as.numeric(time(DK))
+t_future <- as.numeric(time(fc_sarima$mean))
+
+plot(t_hist, as.numeric(DK),
+     type = "l",
+     xlim = c(min(t_hist), max(t_future)),
+     ylim = c(min(as.numeric(DK)) * 0.8, max(as.numeric(DK)) * 1.2),
+     main = "Simulované budoucí průchody řady (SARIMA, 20 simulací)",
+     ylab = "Počet usmrcených",
+     xlab = "Rok",
+     col  = "steelblue", lwd = 1.5)
+
+for (i in 1:n_sim) {
+  sim <- as.numeric(simulate(fit_sarima, nsim = 10, future = TRUE))
+  lines(t_future, sim, col = rgb(0.8, 0.2, 0.2, 0.3), lwd = 1)
+}
+
+lines(t_future, as.numeric(fc_sarima$mean), col = "red", lwd = 2)
+
+legend("topright",
+       legend = c("Původní řada", "Simulace", "Bodová predikce"),
+       col    = c("steelblue", rgb(0.8, 0.2, 0.2, 0.6), "red"),
+       lwd    = c(1.5, 1, 2))
+```
+
+**Komentář:** Každá šedá čára je jeden možný budoucí průchod řady — vizualizuje variabilitu predikce lépe než samotné intervaly spolehlivosti. Červená čára je bodová predikce (střední hodnota).
+
+---
+
+**Komentář:** Každá šedá čára je jeden možný budoucí průchod řady — vizualizuje variabilitu predikce lépe než samotné intervaly spolehlivosti. Červená čára je bodová predikce (střední hodnota).
+
+---
+
+# Porovnání modelů a závěr
+
+```{r porovnani-finalni}
+# Přehledná tabulka AIC/BIC — včetně BIC varianty SARIMA
+tab <- data.frame(
+  Model = c("Lineární (trend+season)", "SARIMA (AIC)", "SARIMA (BIC)", "ARIMAX"),
+  AIC   = round(c(AIC(fit_lm), AIC(fit_sarima), AIC(fit_sarima_bic), AIC(fit_arimax)), 2),
+  BIC   = round(c(BIC(fit_lm), BIC(fit_sarima), BIC(fit_sarima_bic), BIC(fit_arimax)), 2),
+  `Residua OK` = c(
+    ifelse(Box.test(residuals(fit_lm),          lag=20, type="Ljung-Box")$p.value > 0.05, "✅", "❌"),
+    ifelse(Box.test(residuals(fit_sarima),       lag=20, type="Ljung-Box")$p.value > 0.05, "✅", "❌"),
+    ifelse(Box.test(residuals(fit_sarima_bic),   lag=20, type="Ljung-Box")$p.value > 0.05, "✅", "❌"),
+    ifelse(Box.test(residuals(fit_arimax),       lag=20, type="Ljung-Box")$p.value > 0.05, "✅", "❌")
+  ),
+  check.names = FALSE
+)
+print(tab)
+```
+
+**Závěr:**
+
+- **Lineární model** (trend + sezónnost / Fourierovy koeficienty) je interpretovatelný a intuitivní, ale residua jsou autokorelovaná — model nezachycuje veškerou strukturu v datech.
+- **SARIMA** řeší autokorelaci a poskytuje spolehlivé predikce bez nutnosti externích prediktorů. Nevýhodou je, že nezahrnuje vliv zákona o pásech ani ceny benzínu.
+- **ARIMAX** je nejúplnější model: kombinuje ARIMA strukturu s věcně smysluplnými regresory. Koeficient u `law` interpretujeme jako průměrný efekt zákona o povinném připoutání na počet obětí. Nevýhoda: pro predikci potřebujeme odhadnout budoucí hodnoty regresorů.
+
+Pro **predikci** doporučujeme model SARIMA nebo ARIMAX (pokud jsou dostupné budoucí hodnoty regresorů). Pro **interpretaci** a věcný závěr je nejcennější ARIMAX díky koeficientu u `law`.
