@@ -104,7 +104,8 @@ legend("topright",
 ## Klasická dekompozice
 
 Zvolíme **aditivní** i **multiplikativní** dekompozici a porovnáme kvalitu residuí.
-
+aditivní jednotkách
+multiplikativní %
 ```{r dekompozice-add}
 dec_add  <- decompose(DK, type = "additive")
 dec_mult <- decompose(DK, type = "multiplicative")
@@ -115,13 +116,6 @@ title("Aditivní dekompozice", line = 3)
 ```{r dekompozice-mult}
 plot(dec_mult)
 title("Multiplikativní dekompozice", line = 3)
-```
-
-```{r dekompozice-residua}
-# Porovnání variability residuí
-# Nelze porovnávat, protože to je v jiných jednotkách, ale chceme co nejmenší číšlo
-cat("Aditivní    — sd residuí:", round(sd(dec_add$random,  na.rm=TRUE), 3), "\n")
-cat("Multiplikativní — sd residuí:", round(sd(dec_mult$random, na.rm=TRUE), 3), "\n")
 ```
 Dekompozice = rozložení časové řady na tři části:
 
@@ -134,14 +128,14 @@ Z grafů obou dekompozic jsou výsledky prakticky totožné — sezónní složk
 V takovém případě volíme aditivní model, protože je jednodušší.
 
 Aditivní model jen sčítá složky:
-- Yt = trend + sezónnost + chyba
+- Yt = trend + sezónnost + chyba(šum)
 Multiplikativní je násobí:
-- Yt = trend × sezónnost × chyba
+- Yt = trend × sezónnost × chyba(šum)
 
 
 ## STL dekompozice
 
-STL (Seasonal and Trend decomposition using Loess) je robustnější metoda, která si poradí s odlehlými hodnotami.
+STL (Seasonal and Trend decomposition using Loess) je robustnější metoda, která si poradí s odlehlými hodnotami. od 1983 jde vidět pokles.
 
 ```{r stl}
 stl_fit <- stl(DK, s.window = "periodic", robust = TRUE)
@@ -180,6 +174,8 @@ alfa — jak rychle se přizpůsobuje celková úroveň řady (počet nehod obec
 beta — jak rychle se mění trend (zrychluje nebo zpomaluje pokles)
 gama — jak rychle se mění sezónní vzor (jestli zimy jsou čím dál nebezpečnější nebo ne)
 
+Pomalu reaguje na rychlé výkyvy, jde to poznat podle červených křivek
+
 ```{r holt-winters}
 
 
@@ -196,16 +192,24 @@ cat("Parametr gama (sezón.):", round(hw_fit$gamma, 4), "\n")
 
 ## Model se sezónními dummies
 
-Ve cvičeních se trend a sezónnost modelují buď přes `lm()` s ručním časovým indexem (cvičení 1, 2), nebo přes `dynlm()` s funkcemi `trend()` a `season()` (cvičení 7, 8). Použijeme oba způsoby.
+Residua = skutečná hodnota - hodnota z modelu
+
+Median = -0.267 - typicky se model skoro netrefí ani na jednu stranu — to je dobře, znamená to že model není systematicky zkreslený.
+
+Estimate = o kolik se změní počet usmrcených oproti referenci.
+
+
+referenční hodnota je leden. Vše se porovnavam s ní. takže
+např. ledev vs unor v unoru umřelo o 13 méně.(Est)
 
 ```{r model-dummies}
-# Způsob z cvičení 7/8 — dynlm s trend() a season()
+
+
 fit_lm <- dynlm(DK ~ trend(DK) + season(DK))
 summary(fit_lm)
 ```
 
 ```{r model-dummies-lm}
-# Způsob z cvičení 1/2 — lm s ručním časovým indexem a kvadratickým trendem
 cas  <- as.numeric(time(DK))
 cas2 <- cas^2
 
@@ -213,7 +217,7 @@ fit_lin <- lm(DK ~ cas)
 fit_kv  <- lm(DK ~ cas + cas2)
 
 cat("Lineární trend  — AIC:", round(AIC(fit_lin), 2),
-    " R²:", round(summary(fit_lin)$r.squared, 3), "\n")
+    " R²:", round(summary(fit_lin)$r.squared, 3),  " \n")
 cat("Kvadratický trend — AIC:", round(AIC(fit_kv),  2),
     " R²:", round(summary(fit_kv)$r.squared,  3), "\n")
 
@@ -226,18 +230,26 @@ legend("topright",
        legend = c("Původní řada", "Lineární trend", "Kvadratický trend"),
        col = c("gray70", "blue", "red"), lty = c(1,1,2), lwd = c(1,2,2))
 ```
+Multiple R-squared:  0.5802
+
+Funkční trend
+Zkoumá jen trend — bez sezónnosti.
+R² - velmi klíčová věc - samostný trend je jen 11% nebo 13 % tzn. zbytek je sezonnost + šum
+
+v původní sezonnost dělala velkou roli. V naší časové řadě má větší roli sezona, než trend
+
+AIC - složitost modelu a to chceme, co nejnižší. Porovnáváme s min. 2. a v tomto případě to není takový rozdíl, takže vememe ten méně složité ... lineární.
+
 
 ## Model s Fourierovými koeficienty
 
-Fourierovy koeficienty jsou alternativou k sezónním dummies — pomocí parametru `K` řídíme počet harmonických složek (cvičení 9).
+Fourierovy koeficienty jsou alternativou k sezónním dummies — pomocí parametru `K` řídíme počet harmonických složek.
 
 ```{r model-fourier}
-# fourier() funguje jen s objekty tslm — použijeme kombinaci lm + fourier z forecast
 fit_f2 <- tslm(DK ~ trend + fourier(DK, K = 2))
 fit_f3 <- tslm(DK ~ trend + fourier(DK, K = 3))
 fit_f6 <- tslm(DK ~ trend + fourier(DK, K = 6))
 
-# Porovnání modelů
 porovnani <- data.frame(
   Model = c("dynlm trend+season", "Fourier K=2", "Fourier K=3", "Fourier K=6"),
   AIC   = round(c(AIC(fit_lm), AIC(fit_f2), AIC(fit_f3), AIC(fit_f6)), 2),
@@ -245,19 +257,32 @@ porovnani <- data.frame(
 )
 print(porovnani)
 ```
+AIC - zase složitost
+BIC - přísnější
+
+Fourierovy koeficienty jsou jiný způsob jak popsat sezónnost — místo 11 dummy proměnných (jeden pro každý měsíc kromě ledna) použiješ siny a cosiny.
+Proč siny a cosiny:
+Sezónnost je opakující se vzor — a každý opakující se vzor jde popsat součtem sinusových vln. K říká kolik vln použiješ:
+
+K=2 - 4 proměnné místo 11 — hrubý odhad sezónnosti
+K=3 - 6 proměnných — přesnější
+K=6 - 12 proměnných — úplně přesný, ekvivalent dummy proměnných
+
+tzn. K2  je nejlepší BIC je nejnižší a my chceme, co nejméně parametrů, abychom měli, co nejjednodušší model. 
 
 ```{r model-nejlepsi-vyber}
 # Zobrazení fitted values nejlepšího modelu (dynlm)
 plot(DK, col = "gray70",
-     main = "Fitted values — dynlm (trend + season)",
+     main = "Fitted values — dynlm (k2)",
      ylab = "Počet usmrcených")
-lines(fitted(fit_lm), col = "red", lwd = 2)
+lines(fitted(fit_f2), col = "red", lwd = 2)
 legend("topright",
        legend = c("Pozorovaná data", "Fitted values"),
        col = c("gray70", "red"), lwd = c(1, 2))
 ```
 
-**Komentář:** Model s nejnižším AIC/BIC vybereme jako optimální. K=6 odpovídá plné sezónnosti (ekvivalent dummies), nižší K jsou parsimoniálnější modely.
+Model s nejnižším AIC/BIC vybereme jako optimální. 
+K=6 odpovídá plné sezónnosti (ekvivalent dummies), nižší K jsou parsimoniálnější modely.
 
 ------------------------------------------------------------------------
 
